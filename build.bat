@@ -9,7 +9,7 @@ pyinstaller ^
   --windowed ^
   --name "氏名整形ツール" ^
   --add-data "surnames.json;." ^
-  main.py
+  desktop.py
 
 echo.
 echo ===== 完了 =====

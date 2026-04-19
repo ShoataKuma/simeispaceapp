@@ -1,123 +1,104 @@
-"""氏名スペース整形ツール"""
-import tkinter as tk
-from tkinter import messagebox, simpledialog
+"""氏名スペース整形ツール - Streamlit版"""
+import streamlit as st
 
 from formatter import format_name
 from surname_detector import detect
 
+st.set_page_config(page_title="氏名スペース整形ツール", layout="centered")
+st.title("氏名スペース整形ツール")
 
-class App(tk.Tk):
-    def __init__(self):
-        super().__init__()
-        self.title("氏名スペース整形ツール")
-        self.resizable(True, True)
-        self.minsize(520, 480)
-        self._build_ui()
+if "results" not in st.session_state:
+    st.session_state.results = []
+if "needs_manual" not in st.session_state:
+    st.session_state.needs_manual = []
+if "manual_inputs" not in st.session_state:
+    st.session_state.manual_inputs = {}
+if "lines" not in st.session_state:
+    st.session_state.lines = []
 
-    def _build_ui(self):
-        pad = {"padx": 10, "pady": 4}
 
-        tk.Label(self, text="【入力】Excelからペースト（1行1名）", anchor="w").pack(fill="x", **pad)
+def process_names(lines: list[str], manual_overrides: dict) -> tuple[list, list]:
+    results = []
+    needs_manual = []
 
-        self.input_text = tk.Text(self, height=10, font=("Meiryo", 11), undo=True)
-        self.input_text.pack(fill="both", expand=True, padx=10)
-
-        btn_frame = tk.Frame(self)
-        btn_frame.pack(pady=6)
-        tk.Button(btn_frame, text="　整　形　", font=("Meiryo", 11, "bold"),
-                  command=self._process).pack(side="left", padx=8)
-        tk.Button(btn_frame, text="クリア", font=("Meiryo", 10),
-                  command=self._clear).pack(side="left", padx=4)
-
-        tk.Label(self, text="【出力】", anchor="w").pack(fill="x", **pad)
-
-        self.output_text = tk.Text(self, height=10, font=("Meiryo", 11), state="disabled")
-        self.output_text.pack(fill="both", expand=True, padx=10)
-
-        bottom = tk.Frame(self)
-        bottom.pack(pady=6)
-        tk.Button(bottom, text="全コピー", font=("Meiryo", 10),
-                  command=self._copy_all).pack(side="left", padx=8)
-
-        self.status_var = tk.StringVar(value="準備完了")
-        tk.Label(self, textvariable=self.status_var, anchor="w",
-                 fg="gray").pack(fill="x", padx=10, pady=(0, 6))
-
-    def _process(self):
-        raw = self.input_text.get("1.0", "end").strip()
-        if not raw:
-            return
-
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-        results = []
-        ok = warn = 0
-
-        for line in lines:
-            result = self._format_one(line)
-            results.append(result if result is not None else f"[エラー: {line}]")
-            if result is None:
-                warn += 1
+    for raw in lines:
+        override = manual_overrides.get(raw, "").strip()
+        if override:
+            parts = override.split(None, 1)
+            if len(parts) == 2:
+                pair = (parts[0], parts[1])
             else:
-                ok += 1
-
-        self._set_output("\n".join(results))
-        self.status_var.set(f"処理完了: {ok} 件  /  警告: {warn} 件")
-
-    def _format_one(self, raw_name: str) -> str | None:
-        pair = detect(raw_name)
-
-        if pair is None:
-            # 手動入力ダイアログ
-            pair = self._ask_manual(raw_name)
+                needs_manual.append(raw)
+                results.append((raw, None, "manual_needed"))
+                continue
+        else:
+            pair = detect(raw)
             if pair is None:
-                return None
+                needs_manual.append(raw)
+                results.append((raw, None, "manual_needed"))
+                continue
 
         surname, given = pair
-        result = format_name(surname, given)
+        formatted = format_name(surname, given)
+        if formatted is None:
+            results.append((raw, None, "too_long"))
+        else:
+            results.append((raw, formatted, "ok"))
 
-        if result is None:
-            total = len(surname) + len(given)
-            messagebox.showwarning(
-                "文字数超過",
-                f"「{raw_name}」は合計 {total} 文字（7文字以上）のため処理できません。"
-            )
-            return None
+    return results, needs_manual
 
-        return result
 
-    def _ask_manual(self, name: str) -> tuple[str, str] | None:
-        answer = simpledialog.askstring(
-            "苗字・名前の区切りが不明",
-            f"「{name}」の苗字と名前の間にスペースを入れてください。\n例: 田中 一郎",
-            parent=self
+# --- 入力エリア ---
+input_text = st.text_area(
+    "【入力】Excelからペースト（1行1名）",
+    height=180,
+    placeholder="田中一郎\n佐藤 花子\n長谷川義雄",
+)
+
+if st.button("整　形", type="primary"):
+    lines = [l.strip() for l in input_text.splitlines() if l.strip()]
+    st.session_state.lines = lines
+    st.session_state.manual_inputs = {}
+    results, needs_manual = process_names(lines, {})
+    st.session_state.results = results
+    st.session_state.needs_manual = needs_manual
+
+# --- 手動入力セクション ---
+if st.session_state.needs_manual:
+    st.warning(
+        f"以下 {len(st.session_state.needs_manual)} 件は苗字の区切りが判定できませんでした。"
+        "スペースで苗字と名前を区切って入力してください。"
+    )
+    for name in st.session_state.needs_manual:
+        st.session_state.manual_inputs[name] = st.text_input(
+            f"「{name}」→",
+            value=st.session_state.manual_inputs.get(name, ""),
+            placeholder=f"例: {name[:2]} {name[2:]}",
+            key=f"manual_{name}",
         )
-        if not answer:
-            return None
-        parts = answer.split()
-        if len(parts) < 2:
-            messagebox.showerror("入力エラー", "苗字と名前をスペースで区切って入力してください。")
-            return None
-        return parts[0], "".join(parts[1:])
 
-    def _set_output(self, text: str):
-        self.output_text.config(state="normal")
-        self.output_text.delete("1.0", "end")
-        self.output_text.insert("1.0", text)
-        self.output_text.config(state="disabled")
+    if st.button("手動入力で再整形"):
+        results, needs_manual = process_names(
+            st.session_state.lines, st.session_state.manual_inputs
+        )
+        st.session_state.results = results
+        st.session_state.needs_manual = needs_manual
+        st.rerun()
 
-    def _copy_all(self):
-        content = self.output_text.get("1.0", "end").strip()
-        if content:
-            self.clipboard_clear()
-            self.clipboard_append(content)
-            self.status_var.set("クリップボードにコピーしました")
+# --- 結果表示 ---
+if st.session_state.results:
+    output_lines = []
+    for raw, formatted, status in st.session_state.results:
+        if status == "ok":
+            output_lines.append(formatted)
+        elif status == "too_long":
+            st.error(f"「{raw}」は7文字以上のため処理できません。")
+            output_lines.append(f"[スキップ: {raw}]")
+        else:
+            output_lines.append(f"[未処理: {raw}]")
 
-    def _clear(self):
-        self.input_text.delete("1.0", "end")
-        self._set_output("")
-        self.status_var.set("準備完了")
+    ok_count = sum(1 for _, _, s in st.session_state.results if s == "ok")
+    skip_count = len(st.session_state.results) - ok_count
+    st.info(f"処理完了: {ok_count} 件　／　スキップ: {skip_count} 件")
 
-
-if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    st.text_area("【出力】（コピーして使用）", value="\n".join(output_lines), height=180)
