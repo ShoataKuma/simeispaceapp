@@ -1,0 +1,11 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 苗字JSON生成スクリプト（配布不要）
+generate_surnames.py
